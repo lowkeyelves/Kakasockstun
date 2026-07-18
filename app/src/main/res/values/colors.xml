@@ -1,0 +1,8 @@
+<resources>
+    <color name="adguard_bg">#1F1F1F</color>
+    <color name="adguard_card_bg">#2B2B2B</color>
+    <color name="adguard_green">#67B279</color>
+    <color name="adguard_green_dark">#4C9A6A</color>
+    <color name="adguard_text">#FFFFFF</color>
+    <color name="adguard_text_secondary">#8C8C8C</color>
+</resources>
