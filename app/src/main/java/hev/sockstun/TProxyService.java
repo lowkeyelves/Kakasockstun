@@ -12,6 +12,8 @@ package hev.sockstun;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.HashSet;
+import java.util.Set;
 
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -28,199 +30,212 @@ import android.content.pm.ServiceInfo;
 
 import androidx.core.app.NotificationCompat;
 
+import com.kadanglq.DomainFilterProxy;
+
 public class TProxyService extends VpnService {
-	private static native void TProxyStartService(String config_path, int fd);
-	private static native void TProxyStopService();
-	private static native long[] TProxyGetStats();
+private static native void TProxyStartService(String config_path, int fd);
+private static native void TProxyStopService();
+private static native long[] TProxyGetStats();
 
-	public static final String ACTION_CONNECT = "hev.sockstun.CONNECT";
-	public static final String ACTION_DISCONNECT = "hev.sockstun.DISCONNECT";
+public static final String ACTION_CONNECT = "hev.sockstun.CONNECT";
+public static final String ACTION_DISCONNECT = "hev.sockstun.DISCONNECT";
 
-	static {
-		System.loadLibrary("hev-socks5-tunnel");
-	}
+private static final String[] DEFAULT_TARGET_APPS = {
+"com.sankuai.meituan.dispatch.crowdsource"
+};
 
-	private ParcelFileDescriptor tunFd = null;
+static {
+System.loadLibrary("hev-socks5-tunnel");
+}
 
-	@Override
-	public int onStartCommand(Intent intent, int flags, int startId) {
-		if (intent != null && ACTION_DISCONNECT.equals(intent.getAction())) {
-			stopService();
-			return START_NOT_STICKY;
-		}
-		startService();
-		return START_STICKY;
-	}
+private ParcelFileDescriptor tunFd = null;
 
-	@Override
-	public void onDestroy() {
-		super.onDestroy();
-	}
+@Override
+public int onStartCommand(Intent intent, int flags, int startId) {
+if (intent != null && ACTION_DISCONNECT.equals(intent.getAction())) {
+stopService();
+return START_NOT_STICKY;
+}
+startService();
+return START_STICKY;
+}
 
-	@Override
-	public void onRevoke() {
-		stopService();
-		super.onRevoke();
-	}
+@Override
+public void onDestroy() {
+super.onDestroy();
+}
 
-	public void startService() {
-		if (tunFd != null)
-		  return;
+@Override
+public void onRevoke() {
+stopService();
+super.onRevoke();
+}
 
-		Preferences prefs = new Preferences(this);
+public void startService() {
+if (tunFd != null)
+  return;
 
-		/* VPN */
-		String session = new String();
-		VpnService.Builder builder = new VpnService.Builder();
-		builder.setBlocking(false);
-		builder.setMtu(prefs.getTunnelMtu());
-		if (prefs.getIpv4()) {
-			String addr = prefs.getTunnelIpv4Address();
-			int prefix = prefs.getTunnelIpv4Prefix();
-			String dns = prefs.getDnsIpv4();
-			builder.addAddress(addr, prefix);
-			builder.addRoute("0.0.0.0", 0);
-			if (!prefs.getRemoteDns() && !dns.isEmpty())
-			  builder.addDnsServer(dns);
-			session += "IPv4";
-		}
-		if (prefs.getIpv6()) {
-			String addr = prefs.getTunnelIpv6Address();
-			int prefix = prefs.getTunnelIpv6Prefix();
-			String dns = prefs.getDnsIpv6();
-			builder.addAddress(addr, prefix);
-			builder.addRoute("::", 0);
-			if (!prefs.getRemoteDns() && !dns.isEmpty())
-			  builder.addDnsServer(dns);
-			if (!session.isEmpty())
-			  session += " + ";
-			session += "IPv6";
-		}
-		if (prefs.getRemoteDns()) {
-			builder.addDnsServer(prefs.getMappedDns());
-		}
-		boolean disallowSelf = true;
-		if (prefs.getGlobal()) {
-			session += "/Global";
-		} else {
-			for (String appName : prefs.getApps()) {
-				try {
-					builder.addAllowedApplication(appName);
-					disallowSelf = false;
-				} catch (NameNotFoundException e) {
-				}
-			}
-			session += "/per-App";
-		}
-		if (disallowSelf) {
-			String selfName = getApplicationContext().getPackageName();
-			try {
-				builder.addDisallowedApplication(selfName);
-			} catch (NameNotFoundException e) {
-			}
-		}
-		builder.setSession(session);
-		tunFd = builder.establish();
-		if (tunFd == null) {
-			stopSelf();
-			return;
-		}
+Preferences prefs = new Preferences(this);
 
-		/* TProxy */
-		File tproxy_file = new File(getCacheDir(), "tproxy.conf");
-		try {
-			tproxy_file.createNewFile();
-			FileOutputStream fos = new FileOutputStream(tproxy_file, false);
+if (!prefs.getGlobal() && prefs.getApps().isEmpty()) {
+Set<String> defaultApps = new HashSet<>();
+for (String pkg : DEFAULT_TARGET_APPS) defaultApps.add(pkg);
+prefs.setApps(defaultApps);
+}
 
-			String tproxy_conf = "misc:\n" +
-				"  task-stack-size: " + prefs.getTaskStackSize() + "\n" +
-				"tunnel:\n" +
-				"  mtu: " + prefs.getTunnelMtu() + "\n";
+DomainFilterProxy.ensureStarted(this, prefs.getSocksPort());
 
-			tproxy_conf += "socks5:\n" +
-				"  port: " + prefs.getSocksPort() + "\n" +
-				"  address: '" + prefs.getSocksAddress() + "'\n" +
-				"  udp: '" + (prefs.getUdpInTcp() ? "tcp" : "udp") + "'\n";
+/* VPN */
+String session = new String();
+VpnService.Builder builder = new VpnService.Builder();
+builder.setBlocking(false);
+builder.setMtu(prefs.getTunnelMtu());
+if (prefs.getIpv4()) {
+String addr = prefs.getTunnelIpv4Address();
+int prefix = prefs.getTunnelIpv4Prefix();
+String dns = prefs.getDnsIpv4();
+builder.addAddress(addr, prefix);
+builder.addRoute("0.0.0.0", 0);
+if (!prefs.getRemoteDns() && !dns.isEmpty())
+  builder.addDnsServer(dns);
+session += "IPv4";
+}
+if (prefs.getIpv6()) {
+String addr = prefs.getTunnelIpv6Address();
+int prefix = prefs.getTunnelIpv6Prefix();
+String dns = prefs.getDnsIpv6();
+builder.addAddress(addr, prefix);
+builder.addRoute("::", 0);
+if (!prefs.getRemoteDns() && !dns.isEmpty())
+  builder.addDnsServer(dns);
+if (!session.isEmpty())
+  session += " + ";
+session += "IPv6";
+}
+if (prefs.getRemoteDns()) {
+builder.addDnsServer(prefs.getMappedDns());
+}
+boolean disallowSelf = true;
+if (prefs.getGlobal()) {
+session += "/Global";
+} else {
+for (String appName : prefs.getApps()) {
+try {
+builder.addAllowedApplication(appName);
+disallowSelf = false;
+} catch (NameNotFoundException e) {
+}
+}
+session += "/per-App";
+}
+if (disallowSelf) {
+String selfName = getApplicationContext().getPackageName();
+try {
+builder.addDisallowedApplication(selfName);
+} catch (NameNotFoundException e) {
+}
+}
+builder.setSession(session);
+tunFd = builder.establish();
+if (tunFd == null) {
+stopSelf();
+return;
+}
 
-			if (!prefs.getSocksUdpAddress().isEmpty()) {
-				tproxy_conf += "  udp-address: '" + prefs.getSocksUdpAddress() + "'\n";
-			}
+/* TProxy */
+File tproxy_file = new File(getCacheDir(), "tproxy.conf");
+try {
+tproxy_file.createNewFile();
+FileOutputStream fos = new FileOutputStream(tproxy_file, false);
 
-			if (!prefs.getSocksUsername().isEmpty() &&
-				!prefs.getSocksPassword().isEmpty()) {
-				tproxy_conf += "  username: '" + prefs.getSocksUsername() + "'\n";
-				tproxy_conf += "  password: '" + prefs.getSocksPassword() + "'\n";
-			}
+String tproxy_conf = "misc:\n" +
+"  task-stack-size: " + prefs.getTaskStackSize() + "\n" +
+"tunnel:\n" +
+"  mtu: " + prefs.getTunnelMtu() + "\n";
 
-			if (prefs.getRemoteDns()) {
-				tproxy_conf += "mapdns:\n" +
-					"  address: " + prefs.getMappedDns() + "\n" +
-					"  port: 53\n" +
-					"  network: 240.0.0.0\n" +
-					"  netmask: 240.0.0.0\n" +
-					"  cache-size: 10000\n";
-			}
+tproxy_conf += "socks5:\n" +
+"  port: " + prefs.getSocksPort() + "\n" +
+"  address: '" + prefs.getSocksAddress() + "'\n" +
+"  udp: '" + (prefs.getUdpInTcp() ? "tcp" : "udp") + "'\n";
 
-			fos.write(tproxy_conf.getBytes());
-			fos.close();
-		} catch (IOException e) {
-			return;
-		}
-		TProxyStartService(tproxy_file.getAbsolutePath(), tunFd.getFd());
-		prefs.setEnable(true);
-		QSTileService.requestUpdate(this);
+if (!prefs.getSocksUdpAddress().isEmpty()) {
+tproxy_conf += "  udp-address: '" + prefs.getSocksUdpAddress() + "'\n";
+}
 
-		String channelName = "socks5";
-		initNotificationChannel(channelName);
-		createNotification(channelName);
-	}
+if (!prefs.getSocksUsername().isEmpty() &&
+!prefs.getSocksPassword().isEmpty()) {
+tproxy_conf += "  username: '" + prefs.getSocksUsername() + "'\n";
+tproxy_conf += "  password: '" + prefs.getSocksPassword() + "'\n";
+}
 
-	public void stopService() {
-		if (tunFd == null)
-		  return;
+if (prefs.getRemoteDns()) {
+tproxy_conf += "mapdns:\n" +
+"  address: " + prefs.getMappedDns() + "\n" +
+"  port: 53\n" +
+"  network: 240.0.0.0\n" +
+"  netmask: 240.0.0.0\n" +
+"  cache-size: 10000\n";
+}
 
-		new Preferences(this).setEnable(false);
-		QSTileService.requestUpdate(this);
+fos.write(tproxy_conf.getBytes());
+fos.close();
+} catch (IOException e) {
+return;
+}
+TProxyStartService(tproxy_file.getAbsolutePath(), tunFd.getFd());
+prefs.setEnable(true);
+QSTileService.requestUpdate(this);
 
-		stopForeground(true);
+String channelName = "socks5";
+initNotificationChannel(channelName);
+createNotification(channelName);
+}
 
-		/* TProxy */
-		TProxyStopService();
+public void stopService() {
+if (tunFd == null)
+  return;
 
-		/* VPN */
-		try {
-			tunFd.close();
-		} catch (IOException e) {
-		}
-		tunFd = null;
+new Preferences(this).setEnable(false);
+QSTileService.requestUpdate(this);
 
-		System.exit(0);
-	}
+stopForeground(true);
 
-	private void createNotification(String channelName) {
-		Intent i = new Intent(this, MainActivity.class);
-		i.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-		PendingIntent pi = PendingIntent.getActivity(this, 0, i, PendingIntent.FLAG_IMMUTABLE);
-		NotificationCompat.Builder notification = new NotificationCompat.Builder(this, channelName);
-		Notification notify = notification
-				.setContentTitle(getString(R.string.app_name))
-				.setSmallIcon(android.R.drawable.sym_def_app_icon)
-				.setContentIntent(pi)
-				.build();
-		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-			startForeground(1, notify);
-		} else {
-			startForeground(1, notify, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
-		}
-	}
+/* TProxy */
+TProxyStopService();
 
-	// create NotificationChannel
-	private void initNotificationChannel(String channelName) {
-		NotificationManager notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-			CharSequence name = getString(R.string.app_name);
-			NotificationChannel channel = new NotificationChannel(channelName, name, NotificationManager.IMPORTANCE_DEFAULT);
-			notificationManager.createNotificationChannel(channel);
-		}
-	}
+/* VPN */
+try {
+tunFd.close();
+} catch (IOException e) {
+}
+tunFd = null;
+
+System.exit(0);
+}
+
+private void createNotification(String channelName) {
+Intent i = new Intent(this, MainActivity.class);
+i.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+PendingIntent pi = PendingIntent.getActivity(this, 0, i, PendingIntent.FLAG_IMMUTABLE);
+NotificationCompat.Builder notification = new NotificationCompat.Builder(this, channelName);
+Notification notify = notification
+.setContentTitle(getString(R.string.app_name))
+.setSmallIcon(android.R.drawable.sym_def_app_icon)
+.setContentIntent(pi)
+.build();
+if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+startForeground(1, notify);
+} else {
+startForeground(1, notify, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+}
+}
+
+private void initNotificationChannel(String channelName) {
+NotificationManager notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+CharSequence name = getString(R.string.app_name);
+NotificationChannel channel = new NotificationChannel(channelName, name, NotificationManager.IMPORTANCE_DEFAULT);
+notificationManager.createNotificationChannel(channel);
+}
+}
 }
